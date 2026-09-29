@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 项目运行时产物
+generated-images/
+*.log
+
+# 凭据：任何情况下都不得提交
+.env
+.env.*
+*.token
+.cookie
+.baidu-pan-helper/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

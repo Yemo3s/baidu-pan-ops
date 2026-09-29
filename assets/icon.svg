@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="百度网盘全能管家">
+  <title>百度网盘全能管家 · baidu-pan-ops</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#06A7FF"/>
+      <stop offset="55%" stop-color="#0A6FD8"/>
+      <stop offset="100%" stop-color="#0052D9"/>
+    </linearGradient>
+    <linearGradient id="cloudBack" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#E4EBF5"/>
+      <stop offset="100%" stop-color="#C3D2E6"/>
+    </linearGradient>
+    <linearGradient id="folder" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EAF0F8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方块底 -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+
+  <!-- 背后的云 -->
+  <g>
+    <circle cx="252" cy="196" r="86" fill="url(#cloudBack)"/>
+    <circle cx="176" cy="228" r="66" fill="url(#cloudBack)"/>
+    <circle cx="330" cy="236" r="62" fill="url(#cloudBack)"/>
+    <rect x="112" y="218" width="270" height="80" rx="40" fill="url(#cloudBack)"/>
+  </g>
+
+  <!-- 前景文件夹 -->
+  <g>
+    <path d="M150 236 h74 l20 22 h118 a22 22 0 0 1 22 22 v126 a22 22 0 0 1 -22 22 H150 a22 22 0 0 1 -22 -22 V258 a22 22 0 0 1 22 -22 z"
+          fill="url(#folder)"/>
+    <path d="M150 236 h74 l20 22 h118 a22 22 0 0 1 22 22 v10 H128 v-32 a22 22 0 0 1 22 -22 z"
+          fill="#FFFFFF"/>
+  </g>
+
+  <!-- 完成对勾徽章 -->
+  <g>
+    <circle cx="352" cy="366" r="52" fill="#FFFFFF"/>
+    <circle cx="352" cy="366" r="40" fill="#0A6FD8"/>
+    <path d="M334 366 l13 14 l25 -28" fill="none" stroke="#FFFFFF" stroke-width="12"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
