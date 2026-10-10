@@ -11,6 +11,7 @@ to_win() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 T="$(to_win "$(cd "$(dirname "$0")" && pwd)/netdisk_crud.py")"
+A="$(to_win "$(cd "$(dirname "$0")" && pwd)/pan_api.py")"
 W="$(to_win "$(mktemp -d)")"
 STAMP="$(date +%s)"
 D="/apps/bdpan/_st_$STAMP"
@@ -61,6 +62,44 @@ step "7. rm 递归删除"
 call rm --remote "$D" --force >/dev/null 2>&1 && ok "删除" || bad "删除"
 sleep 2
 names "$D" >/dev/null 2>&1 && bad "删除后仍可见" || ok "已不可见"
+
+step "8. pan_api 写操作必须带 bdstoken（离线，不需登录态）"
+# 回归守卫：/api/filemanager 的 move/rename/delete 缺 bdstoken 时，服务端只回一个
+# 无提示的 errno=8001，delete 必失败、move/rename 时好时坏 —— 曾因此误判成路径写错。
+if "$PY" -u - "$A" <<'PYEOF'
+import sys, os, importlib.util
+
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("pan_api_uut", path)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+calls = []
+def fake_req(self, method, p, params, data=None, retries=3):
+    calls.append((p, dict(params or {})))
+    if p == "/api/gettemplatevariable":
+        return {"errno": 0, "result": {"bdstoken": "T-TOKEN"}}
+    return {"errno": 0, "taskid": None}
+m.Pan._req = fake_req
+pan = m.Pan("dummy-bduss-for-offline-test")
+
+cases = [("delete", (["/a"],)),
+         ("rename", ("/a", "newname")),
+         ("move", ([{"path": "/a", "dest": "/b"}],))]
+bad = []
+for fn, argv in cases:
+    calls.clear()
+    getattr(pan, fn)(*argv)
+    fm = [c for c in calls if c[0] == "/api/filemanager"]
+    got = fm[0][1].get("bdstoken") if fm else None
+    print("    %-8s bdstoken=%s" % (fn, got))
+    if got != "T-TOKEN":
+        bad.append(fn)
+if bad:
+    print("    缺少 bdstoken 的写操作: %s" % ", ".join(bad))
+sys.exit(1 if bad else 0)
+PYEOF
+then ok "delete / rename / move 均自动带上 bdstoken"; else bad "有写操作未带 bdstoken（errno=8001 会复现）"; fi
 
 rm -rf "$W"
 printf '\n===== 结果: %d 通过 / %d 失败 =====\n' "$PASS" "$FAIL"
