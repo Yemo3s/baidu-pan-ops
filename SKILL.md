@@ -1,6 +1,6 @@
 ---
 name: baidu-pan-ops
-version: 1.0.2
+version: 1.0.3
 display_name: 百度网盘全能管家
 display_name_en: Baidu Pan All-in-One Manager
 description: 免 API 配置的百度网盘全能管家：上传、下载、列出、新建文件夹、重命名、移动、复制、删除、批量整理分类归档，一句话直达。双引擎设计——官方 CLI 稳定可靠，网页接口可操作全盘任意路径，扫码登录一次后全自动无头运行，凭据只在内存不落盘。This skill should be used when the user asks to 操作百度网盘（Baidu Netdisk / bdpan）里的文件：列出、上传、下载、重命名、移动、复制、删除、批量整理目录结构。触发词：百度网盘、网盘、bdpan、增删改查、移动文件、整理网盘。
@@ -16,9 +16,9 @@ agent_created: true
 对百度网盘执行完整的文件/目录增删改查与批量整理。提供两条互补路线：
 
 - **bdpan CLI 路线**（`scripts/netdisk_crud.py`）：官方客户端，作用域严格限定 `/apps/bdpan`，稳定可靠；
-- **网页接口路线**（`scripts/pan_api.py` + `scripts/get_cookie.py`）：使用用户自己的登录态，可操作全盘任意路径（如根目录整理）。
+- **网页接口路线**（`scripts/pan_api.py` + `scripts/get_cookie.py`）：使用用户自己的登录态，可操作全盘任意路径（如根目录整理、下载真实目录里的文件）。
 
-路线选择规则：用户目标都在 `/apps/bdpan` 内 → 用 CLI 路线；需要操作全盘或做根目录整理 → 用网页接口路线（须先获得用户明确授权使用其登录态）。
+路线选择规则：用户目标都在 `/apps/bdpan` 内 → 用 CLI 路线；需要操作全盘、做根目录整理、或**下载 `/apps/bdpan` 之外的真实文件** → 用网页接口路线（须先获得用户明确授权使用其登录态）。
 
 ## 前置条件
 
@@ -33,7 +33,8 @@ agent_created: true
 |---|---|---|
 | 「看看网盘里都有什么」 | `ls` 列根目录 / 递归列出 | CLI |
 | 「把这个文件夹传到网盘备份」 | 递归 `put` 到 `/apps/bdpan/<名字>` | CLI |
-| 「下载网盘里的 xx.pdf 到桌面」 | `get` 到本地指定文件路径 | CLI |
+| 「下载网盘里的 xx.pdf 到桌面」 | `get` 到本地指定文件路径 | 两条皆可 |
+| 「下一本在 xx 目录里的书」 | `ls` 逐层定位 → `pan_api.py get` 拉直链下载（支持断点续传） | 网页 |
 | 「把网盘里所有 PDF 挑出来放到一个文件夹」 | 先 `ls` 摸底 → 生成移动清单 → 用户确认 → 批量 `move` | 网页 |
 | 「网盘太乱了，按类型整理一下」 | 摸底 → 分组方案 → dry-run 预览 → 分批整目录搬移 | 网页 |
 | 「把 A 文件夹移到 B 下面」 | `mv --remote A --dest B` | 两条皆可 |
@@ -65,13 +66,29 @@ python scripts/netdisk_crud.py ls    --remote subdir     # 列子目录
 python scripts/netdisk_crud.py names --remote subdir     # 每行一个名字（供脚本精确断言）
 ```
 
-### 上传 / 下载（CLI 路线）
+### 上传 / 下载
+
+CLI 路线（限 `/apps/bdpan` 作用域）：
 
 ```bash
 python scripts/netdisk_crud.py put --local ./a.txt --remote subdir/a.txt
 python scripts/netdisk_crud.py put --local ./some_dir --remote some_dir   # 目录递归上传
 python scripts/netdisk_crud.py get --remote subdir/a.txt --local ./dl/a.txt   # 第二参数是文件路径，不是目录
 ```
+
+**网页接口路线（全盘任意路径，需 BDUSS 环境变量）** —— 下载真实目录里的文件只能走这条：
+
+```bash
+eval "$(python scripts/get_cookie.py get)" && export BDUSS STOKEN
+python scripts/pan_api.py get --path "/某分类目录/某子目录/某本书.pdf" --dest "D:/下载/某本书.pdf"
+python scripts/pan_api.py get --path "/某目录/某文件.zip" --dest "D:/下载"   # --dest 是已存在目录时自动沿用文件名
+```
+
+`get` 的三条实测要点：
+- **断点续传**：带 `Range` 头下载，被限速或中途断流时保留已下部分，**重跑同一条命令即从断点继续**（脚本自己判断服务端是否返回 206，不是 206 就从头来，避免拼出坏文件）。想强制重下加 `--no-resume`。
+- **大小核对**：下完比对本地与远端字节数，不一致直接报失败——非会员限速下常见的「静默下半个文件」不会溜过去。
+- **不做 md5 校验**：filemetas 返回的 md5 是百度自家变体编码（含 `i`/`v` 等非十六进制字符），不是标准 MD5。要校验完整性就用大小 + 文件自身格式（zip/epub 可开则完整）。
+- 大文件（>100MB）请放后台跑，非会员速度可能只有几百 KB/s。
 
 目录上传前先清掉本地缓存目录（`__pycache__`、`.git`），否则会被一并上传。
 写操作成功后工具会轮询确认落地（远端最终一致，刚写完立即列举可能看不到）。
@@ -109,6 +126,10 @@ python scripts/pan_api.py move --src /a /b /c --dest /分类目录   # 单批 �
 python scripts/netdisk_crud.py rm --remote path --force    # CLI 路线（限 /apps/bdpan）
 python scripts/pan_api.py rm --path /a --yes               # 网页路线（需显式 --yes）
 ```
+
+删除是**进回收站**（非物理删除），可在网盘回收站恢复；脚本已自动处理写操作必需的
+`bdstoken`（缺它会得到无提示的 `errno=8001`，详见参考文档第二节）。
+**递归清空回收站需人机验证**（`errno=132`），脚本不绕过，请引导用户在网页端操作。
 
 ## 行为坑（务必先读）
 

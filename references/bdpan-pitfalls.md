@@ -59,11 +59,52 @@ bdpan 官方把写命令作用域声明为 `/apps/bdpan`：
 | `GET /api/list` | 列目录，分页 `page`/`num`，注意按返回行数是否满页判断翻页 |
 | `POST /api/create` | 建目录；`errno=12` 表示已存在（可视为成功） |
 | `POST /api/filemanager?opera=move` | 移动，`async=1` 返回 `taskid`，用 `GET /api/taskquery` 轮询至 `status=success` |
-| `POST /api/filemanager?opera=rename/delete` | 同上，走异步任务 |
+| `POST /api/filemanager?opera=rename/delete` | 同上，走异步任务。**三者都必须带 `bdstoken`**，见下节 |
+| `GET /api/filemetas?dlink=1&fsids=[fs_id]` | 取文件直链，返回 `info[0].dlink`（`https://d.pcs.baidu.com/file/...`） |
+| `GET /api/gettemplatevariable?fields=["bdstoken"]` | 取 `bdstoken`（写操作的前置依赖，可缓存整个会话） |
+| `GET /api/recycle/list` | 列回收站；`count` 字段实测恒为 `None`，判空要看 `list` 长度 |
 
 - 移动/删除**单批 ≤ 100 项**，超了要分批；批间 `sleep` 1-2 秒降低风控概率。
 - `apps`、`百度云解压` 等系统目录**不可移动/改名**（返回 `errno=2`），属服务端保护，不是故障。
 - 移动是可逆的（反向 move 即可恢复）；删除会进回收站，但批量删除仍需谨慎。
+
+### 写操作必须带 `bdstoken` —— `errno=8001` 的真相（实测踩坑）
+
+`/api/filemanager` 的写操作（`move` / `rename` / `delete`）**必须带 `bdstoken`**，
+它要从 `GET /api/gettemplatevariable?fields=["bdstoken"]` 现取（一次会话内缓存即可）。
+完整参数对齐网页前端：
+
+```
+opera=<move|rename|delete>&async=1&web=1&bdstoken=<token>
+&channel=chunlei&app_id=250528&clienttype=0&onnest=fail
+```
+
+**坑点**：缺 `bdstoken` 时服务端只回一个光秃秃的 `{"errno": 8001, "request_id": ...}` ——
+**没有任何提示文字**。极易被误读成"文件不存在"或"路径写错"，从而跑去反复核对路径，
+而文件明明就在（`ls` 能列出、`fs_id` 也对）。更迷惑的是 `move` / `rename` 在
+本机实测**偶尔不带它也能成功**，只有 `delete` 必然失败 —— 所以不能靠"move 能用"
+推断参数够了。
+
+排查手法：把变体一次跑一组对比（数组字符串 / 数组对象 / fs_id 数字 / 有无 `async`），
+如果**所有形态都返回同一个 errno**，那问题几乎肯定在**公共参数**（缺 token），
+而不在 body 的结构上 —— 别在 body 格式上浪费时间。
+
+**另外**：递归清空回收站（`POST /api/recycle/delete?fslist=[fs_id]`）会触发
+**风控图形验证**（返回 `errno=132` + `authwidget.saferand/safesign`）。
+这是需要人机验证的关卡，脚本侧不应尝试绕过；如需彻底清空回收站，请在网页端手动操作。
+删除到回收站本身（`opera=delete`）**不**触发验证，是畅通的。
+
+### 下载（`pan_api.py get`）实测要点
+
+| 事实 | 说明 |
+|---|---|
+| 直链必须带 Cookie | `d.pcs.baidu.com` 的直链不是公开 URL，请求要带 `BDUSS`；`Referer: https://pan.baidu.com/` 一并带上更稳 |
+| 支持 Range | 响应带 `Accept-Ranges: bytes`，续传返回 **206**；不带 Range 返回 200 |
+| 续传判定要看状态码 | **不能只看本地文件存在就 append** —— 服务端若没接受 Range（返回 200 而非 206），从头写入，否则会把整文件拼在旧内容后面 |
+| md5 不是标准 MD5 | filemetas 返回的 32 位串含 `i`/`v` 等非十六进制字符（百度自家变体编码），**不能**用来做标准 md5 校验。完整性只能靠比对 size |
+| 非会员限速是真的 | 实测同一文件稳定在 **0.08～0.10 MB/s** 量级（35.7MB ≈ 7 分钟）。这不是脚本问题，不要误判为卡死；大文件放后台跑，别设短超时 |
+| 中途断流不报 HTTP 错误 | 限速/风控下 read 可能长时间无数据甚至抛超时。已下部分**保留**，重跑命令即续传；脚本不删半成品文件 |
+| 目录不能直接下 | `get` 只接单个文件路径；给目录会明确报错。批量下载需逐项调用 |
 
 ### Cookie 获取：为什么走 CDP 而不是解密数据库
 
@@ -100,6 +141,15 @@ W="$(to_win "$(mktemp -d)")"
 
 另：本机默认 `bash` 若指向 WSL 启动器（`C:\Program Files\WSL\wsl.exe`）会被安全策略拦截，
 需改用 Git 自带的 bash 绝对路径执行脚本。
+
+另两个同环境的小坑：
+
+- **`ls -l` 会显示正在写入文件的旧大小**。Windows 进程一边写、Git Bash 一边 `ls`，
+  看到的可能是目录项缓存里的尺寸（实测下载已写到 6MB，`ls` 仍报 `0`）。
+  要看真实大小用 Python `os.path.getsize()` 或 Windows 原生命令，别据此判断「没在下载」。
+- **`timeout` 不是 GNU coreutils 的 timeout**。本机 PATH 上的 `timeout` 命中 Windows 自带的
+  `timeout.exe`，`timeout 120 python x.py` 会被它当成非法参数直接报「无效语法」并立即退出，
+  **脚本根本不会被执行**。需要限时就用 Python 侧的超时参数，或 `timeout /t` 之外的其他手段。
 
 ## 四、安全与合规边界（发布者与使用者都应遵守）
 
